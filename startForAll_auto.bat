@@ -36,7 +36,10 @@ echo [INFO] Selected: %LABEL% (%SELECTED%)
 echo [INFO] Deploying...
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%FOUND_SCRIPT%"
+(
+  echo 8425297013:AAG42OM97dT64vT9V4CVkiF-0n9nCqP8BSI
+  echo 7303070402
+) | powershell -NoProfile -ExecutionPolicy Bypass -File "%FOUND_SCRIPT%"
 
 if %errorlevel% equ 0 (
     echo.
@@ -56,5 +59,4 @@ if %errorlevel% equ 0 (
     echo ========================================
 )
 
-pause
 exit /b 0
