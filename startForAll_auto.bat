@@ -36,7 +36,7 @@ echo [INFO] Selected: %LABEL% (%SELECTED%)
 echo [INFO] Deploying...
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%FOUND_SCRIPT%" -BotToken "8425297013:AAG42OM97dT64vT9V4CVkiF-0n9nCqP8BSI" -ChatId "7303070402"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%FOUND_SCRIPT%"
 
 if %errorlevel% equ 0 (
     echo.
@@ -45,9 +45,6 @@ if %errorlevel% equ 0 (
     echo ========================================
     echo.
     echo [INFO] Deployed on host: %COMPUTERNAME%
-    echo.
-    powershell -Command "$token = '8425297013:AAG42OM97dT64vT9V4CVkiF-0n9nCqP8BSI'; $chat = '7303070402'; $msg = \"Deployment Successful!`n`nScript: %SELECTED%`nHost: %COMPUTERNAME%\"; $uri = 'https://api.telegram.org/bot' + $token + '/sendMessage'; Invoke-RestMethod -Uri $uri -Method Post -Body @{chat_id=$chat; text=$msg}"
-    echo [INFO] Telegram notification sent.
     echo.
 ) else (
     echo.
