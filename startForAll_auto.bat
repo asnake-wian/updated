@@ -36,10 +36,7 @@ echo [INFO] Selected: %LABEL% (%SELECTED%)
 echo [INFO] Deploying...
 echo.
 
-(
-  echo 8425297013:AAG42OM97dT64vT9V4CVkiF-0n9nCqP8BSI
-  echo 7303070402
-) | powershell -NoProfile -ExecutionPolicy Bypass -File "%FOUND_SCRIPT%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%FOUND_SCRIPT%" -BotToken "8425297013:AAG42OM97dT64vT9V4CVkiF-0n9nCqP8BSI" -ChatId "7303070402"
 
 if %errorlevel% equ 0 (
     echo.
