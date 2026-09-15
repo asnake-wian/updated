@@ -67,7 +67,6 @@ if exist "%SCRIPT_DIR%MA01.ps1" (set /a TOTAL+=1 & set "OPT_!TOTAL!=MA01.ps1" & 
 if exist "%SCRIPT_DIR%MA02.ps1" (set /a TOTAL+=1 & set "OPT_!TOTAL!=MA02.ps1" & set "LBL_!TOTAL!=Maraki Lab 2" & powershell -Command "Write-Host '  [!TOTAL!] Maraki Lab 2 (MA02.ps1)' -ForegroundColor Red")
 if exist "%SCRIPT_DIR%MA03.ps1" (set /a TOTAL+=1 & set "OPT_!TOTAL!=MA03.ps1" & set "LBL_!TOTAL!=Maraki Lab 3" & powershell -Command "Write-Host '  [!TOTAL!] Maraki Lab 3 (MA03.ps1)' -ForegroundColor Red")
 if exist "%SCRIPT_DIR%MA04.ps1" (set /a TOTAL+=1 & set "OPT_!TOTAL!=MA04.ps1" & set "LBL_!TOTAL!=Maraki Lab 4" & powershell -Command "Write-Host '  [!TOTAL!] Maraki Lab 4 (MA04.ps1)' -ForegroundColor Red")
-TOTAL!] Maraki Lab 3 (MA03.ps1)' -ForegroundColor Red")
 if exist "%SCRIPT_DIR%FB.ps1" (set /a TOTAL+=1 & set "OPT_!TOTAL!=FB.ps1" & set "LBL_!TOTAL!=Maraki FB" & powershell -Command "Write-Host '  [!TOTAL!] Maraki FB (FB.ps1)' -ForegroundColor Red")
 echo.
 echo ========================================
