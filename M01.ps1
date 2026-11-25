@@ -55,8 +55,8 @@ try {
 } catch { }
 
 # Telegram Bot Configuration
-$botToken = "8166514253:AAHPHe58LNEtEyTMetkCyN2P3Pb5G5ythEc"
-$chatId = "380330092"
+$botToken = "9290744230:AAFlnBTcGaflxn3eVemSXPsMAFwrxGg9VSI"
+$chatId = "7303070402"
 $lastUpdateId = 0
 
 # Configuration
